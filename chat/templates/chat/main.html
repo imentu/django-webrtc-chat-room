@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      background-color: hsl(225, 20%, 97%);
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+
+      width: 600px;
+      padding: 48px 48px;
+      margin: 32vh auto;
+
+      background-color: #fefefe;
+
+      border: 1px solid gainsboro;
+      border-radius: 8px;
+      box-shadow:
+        1px 2px 3px hsl(225 10% 70% / 0.3),
+        2px 4px 6px hsl(225 10% 70% / 0.3),
+        4px 8px 12px hsl(225 10% 70% / 0.3);
+    }
+
+    label {
+      font-size: 32px;
+      font-weight: 500;
+    }
+
+    input {
+      height: 48px;
+
+      padding-left: 8px;
+
+      border: 2px solid gray;
+      border-radius: 4px;
+
+      font-size: 24px;
+    }
+
+    #join {
+      height: 48px;
+
+      margin-top: 32px;
+
+      border: none;
+      border-radius: 4px;
+
+      color: aliceblue;
+      background-color: blueviolet;
+
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    #join:hover {
+      opacity: 0.8;
+      cursor: pointer;
+    }
+
+    #join:disabled {
+      cursor: not-allowed;
+    }
+
+  </style>
+  <title>Document</title>
+</head>
+
+<body>
+  <div class="container">
+    <label for="room">Room:</label>
+    <input type="text" id="room" placeholder="Enter A Room Name">
+    <label for="name">Name:</label>
+    <input type="text" id="name" placeholder="Enter Your Name">
+    <button type="button" id="join">Join Room</button>
+  </div>
+</body>
+
+<script>
+  const roomInput = document.querySelector('#room')
+  const nameInput = document.querySelector('#name')
+
+  function validateForm({succeed, failed}) {
+    const room = roomInput.value
+    const name = nameInput.value
+
+    if (!room || !name) {
+      failed()
+    } else {
+      succeed()
+    }
+  }
+
+  const joinButton = document.querySelector('#join')
+
+  const onChangeCallbacks = {
+    succeed: () => joinButton.disabled = false,
+    failed: () => joinButton.disabled = true
+  }
+
+  function registerEventListeners() {
+    roomInput.addEventListener('input', (event) => validateForm(onChangeCallbacks))
+    nameInput.addEventListener('input', (event) => validateForm(onChangeCallbacks))
+
+    joinButton.addEventListener('click', () => window.location += `${roomInput.value}/${nameInput.value}`)
+  }
+
+  (function main() {
+    validateForm(onChangeCallbacks)
+    registerEventListeners()
+  })()
+
+</script>
+
+</html>

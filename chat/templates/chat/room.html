@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>room - {{ roomName }}</title>
+</head>
+
+<style>
+  .container {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(4, 1fr) 120px;
+    grid-column-gap: 0px;
+    grid-row-gap: 0px;
+
+    width: 1600px;
+    height: 800px;
+
+    margin: 18vh auto;
+  }
+
+  .users-container {
+    border: 1px solid gray;
+    grid-area: 1 / 1 / 5 / 4;
+
+    display: flex;
+    flex-wrap: wrap;
+    gap: 32px;
+
+    padding: 64px;
+    align-content: start;
+  }
+
+  .messages-container {
+    border: 1px solid gray;
+    grid-area: 1 / 4 / 5 / 6;
+  }
+
+  .settings-bar {
+    border: 1px solid gray;
+    grid-area: 5 / 1 / 6 / 4;
+
+    display: flex;
+    justify-content: start;
+    gap: 32px;
+
+    padding: 8px 64px;
+  }
+
+  .settings-bar button {
+    flex-basis: 162px;
+
+    border-radius: 72px;
+
+    font-size: 64px;
+    line-height: 100%;
+  }
+
+  .on {
+    background-color: hsl(100, 99%, 82%);
+  }
+
+  .off {
+    background-color: hsl(1, 100%, 66%);
+  }
+
+  .message-editor-container {
+    border: 1px solid gray;
+    grid-area: 5 / 4 / 6 / 6;
+  }
+
+  .user-item {
+    flex-basis: 160px;
+
+    height: 160px;
+
+    font-size: 32px;
+    text-align: center;
+    line-height: 160px;
+
+    border: 1px solid gray;
+    border-radius: 80px;
+
+    background-color: hsl(49, 83%, 88%);
+  }
+
+</style>
+
+<body>
+  <div class="container">
+    <div id="users-container" class="users-container">
+      <div class="user-item">
+        <video id="video" autoplay hidden></video>
+        <span> {{ userName }} </span>
+      </div>
+    </div>
+    <div class="settings-bar">
+      <button id="turnOffMic" type="button" class="on">🎙️</button>
+      <button id="muteAll" type="button" class="on">🎧</button>
+    </div>
+    <div class="messages-container"></div>
+    <div class="message-editor-container"></div>
+  </div>
+</body>
+
+<script>
+  const ROOM_NAME = '{{roomName}}'
+  const SELF_NAME = '{{userName}}'
+
+  const selfVideoElement = document.querySelector('#video')
+
+  const turnOffMicButton = document.querySelector('#turnOffMic')
+  const muteAllButton = document.querySelector('#muteAll')
+</script>
+
+<script>
+  class RoomConnection {
+    constructor() {
+      this.peers = {}
+    }
+
+    async init() {
+      this.stream = await this.getMediaStream()
+      this.websocket = await this.initWebSocket()
+    }
+
+    async getMediaStream() {
+      try {
+        if (navigator.mediaDevices.getUserMedia === undefined) {
+          navigator.mediaDevices.getUserMedia = function (constraints) {
+            var getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia || navigator.oGetUserMedia;
+            if (!getUserMedia) {
+              return Promise.reject(new Error('getUserMedia is not implemented in this browser'));
+            }
+            return new Promise(function (resolve, reject) {
+              getUserMedia.call(navigator, constraints, resolve, reject);
+            });
+          }
+        }
+        return await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true
+          },
+        })
+      }
+      catch (error) {
+        alert(error)
+      }
+    }
+
+    async initWebSocket() {
+      const websocket = new WebSocket(`ws://${window.location.host}/ws/chat/${ROOM_NAME}/${SELF_NAME}/`)
+      websocket.onmessage = message => this.onWebSocketMessage(message)
+      return websocket
+    }
+
+    async onWebSocketMessage(message) {
+      const data = JSON.parse(message.data)
+      const {peerUserName, event} = data
+      if (peerUserName === SELF_NAME) {
+        return
+      }
+      console.log(`receive server message, event:[${data['event']}]`);
+
+      if (event === 'NewPeer') {
+        await this.handleNewPeer(peerUserName)
+      } else if (event === 'PeerOffer') {
+        await this.handlePeerOffer(peerUserName, data['SDP'])
+      } else if (event === 'PeerAnswer') {
+        await this.handlePeerAnswer(peerUserName, data['SDP'])
+      } else if (event === 'PeerCandidate') {
+        await this.handlePeerCandidate(peerUserName, data)
+      }
+    }
+
+    async handleNewPeer(peerUserName) {
+      const peerConnection = this.newPeerConnection(peerUserName)
+
+      const offer = await peerConnection.createOffer()
+      await peerConnection.setLocalDescription(offer)
+      this.sendToSingalingServer({'event': 'PeerOffer', 'peerUserName': peerUserName, 'SDP': peerConnection.localDescription})
+    }
+
+
+    newPeerConnection(peerUserName) {
+      var peerConnection = new RTCPeerConnection()
+      peerConnection.onicecandidate = ({candidate}) => {
+        if (!candidate) return
+        this.sendToSingalingServer({'event': 'PeerCandidate', 'peerUserName': peerUserName, 'sdpMLineIndex': candidate.sdpMLineIndex, 'candidate': candidate.candidate})
+      }
+      peerConnection.ontrack = event => {
+        const remoteStream = event.streams[0]
+        remoteStream.addTrack(event.track, remoteStream)
+        document.querySelector(`#video-${peerUserName}`).srcObject = remoteStream
+      }
+      this.addStreamTracksToPeerConnection(this.stream, peerConnection)
+
+      this.createUserItem(peerUserName)
+
+      this.peers[peerUserName] = peerConnection
+      return peerConnection
+    }
+
+    createUserItem(peerUserName) {
+      const userItem = document.createElement('div')
+      userItem.classList.add('user-item')
+
+      const userNameContainer = document.createElement('span')
+      userNameContainer.textContent = peerUserName
+
+      const videoElement = document.createElement('video')
+      videoElement.autoplay = true
+      videoElement.hidden = true
+      videoElement.id = `video-${peerUserName}`
+
+      userItem.appendChild(userNameContainer)
+      userItem.appendChild(videoElement)
+      document.querySelector('#users-container').appendChild(userItem)
+    }
+
+    addStreamTracksToPeerConnection(stream, peerConnection) {
+      for (const track of stream.getTracks()) {
+        peerConnection.addTrack(track, stream)
+      }
+    }
+
+    sendToSingalingServer(content) {
+      this.websocket.send(JSON.stringify(content))
+    }
+
+    async handlePeerOffer(peerUserName, sdp) {
+      var peerConnection = this.newPeerConnection(peerUserName)
+
+      await peerConnection.setRemoteDescription(sdp)
+
+      const answer = peerConnection.createAnswer()
+      await peerConnection.setLocalDescription(answer)
+      this.sendToSingalingServer({'event': 'PeerAnswer', 'peerUserName': peerUserName, 'SDP': peerConnection.localDescription})
+    }
+
+    async handlePeerAnswer(peerUserName, sdp) {
+      var peerConnection = this.peers[peerUserName]
+      peerConnection.setRemoteDescription(sdp)
+    }
+
+    async handlePeerCandidate(peerUserName, {sdpMLineIndex, candidate}) {
+      var candidate = new RTCIceCandidate({sdpMLineIndex, candidate})
+      var peerConnection = this.peers[peerUserName]
+      peerConnection.addIceCandidate(candidate)
+    }
+  }
+
+  function registerEventListeners() {
+    turnOffMicButton.addEventListener('click', event => {
+      const button = event.target
+      button.classList.toggle('on')
+      button.classList.toggle('off')
+
+      const isMicOn = button.classList.contains('on')
+      const audioTrack = window.connection.stream.getAudioTracks()[0];
+      audioTrack.enabled = isMicOn;
+    })
+    muteAllButton.addEventListener('click', event => {
+
+    })
+  }
+
+  (function main() {
+    window.connection = new RoomConnection()
+    connection.init()
+
+    registerEventListeners()
+  })()
+
+</script>
+
+</html>
